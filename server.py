@@ -41,13 +41,13 @@ except NameError:
         def __str__(self):
             return self.message or os.strerror(self.errno)
 
-
-LOGLEVEL=logging.DEBUG
+LOGLEVEL = logging.DEBUG
 
 global files
 global files_lock
 global config
 global quotas
+
 
 def normalize_path(path):
     """
@@ -55,6 +55,7 @@ def normalize_path(path):
     and the like.
     """
     return os.path.normcase(os.path.normpath(path))
+
 
 def expire(quotaonly=False, kill_event=None):
     """
@@ -101,12 +102,12 @@ def expire(quotaonly=False, kill_event=None):
                         else:
                             quota += stats.st_size
                             filelist += [(stats.st_mtime, fullname, stats.st_size)]
-                if dirs == [] and removed == files:    # Directory is empty, so we can remove it
+                if dirs == [] and removed == files:  # Directory is empty, so we can remove it
                     logging.debug('Removing directory %s.', dirname)
                     try:
-                            os.rmdir(dirname)
+                        os.rmdir(dirname)
                     except OSError as e:
-                            logging.warning("Exception '%s' deleting directory '%s'.", e, dirname)
+                        logging.warning("Exception '%s' deleting directory '%s'.", e, dirname)
 
             if not quotaonly and config['user_quota_soft']:
                 # Delete oldest files of sender until occupied space is <= user_quota_soft
@@ -130,10 +131,11 @@ def expire(quotaonly=False, kill_event=None):
 
 class MissingComponent(ComponentXMPP):
     def __init__(self, jid, secret, port):
-        ComponentXMPP.__init__(self, jid, secret, "localhost", port)
+        global config
+        ComponentXMPP.__init__(self, jid, secret, config.get("host", "localhost"), port)
         self.register_plugin('xep_0030')
-        self.register_plugin('upload',module='plugins.upload')
-        self.add_event_handler('request_upload_slot',self.request_upload_slot)
+        self.register_plugin('upload', module='plugins.upload')
+        self.add_event_handler('request_upload_slot', self.request_upload_slot)
 
     def request_upload_slot(self, iq):
         global config
@@ -142,20 +144,23 @@ class MissingComponent(ComponentXMPP):
         request = iq['request']
         maxfilesize = int(config['max_file_size'])
         if not request['filename'] or not request['size']:
-            self._sendError(iq,'modify','bad-request','please specify filename and size')
+            self._sendError(iq, 'modify', 'bad-request', 'please specify filename and size')
         elif maxfilesize < int(request['size']):
-            self._sendError(iq,'modify','not-acceptable','file too large. max file size is '+str(maxfilesize))
-        elif 'whitelist' not in config or iq['from'].domain in config['whitelist'] or iq['from'].bare in config['whitelist']:
+            self._sendError(iq, 'modify', 'not-acceptable', 'file too large. max file size is ' + str(maxfilesize))
+        elif 'whitelist' not in config or iq['from'].domain in config['whitelist'] or iq['from'].bare in config[
+            'whitelist']:
             sender = iq['from'].bare
             sender_hash = hashlib.sha1(sender.encode()).hexdigest()
-            if config['user_quota_hard'] and quotas.setdefault(sender_hash, 0) + int(request['size']) > config['user_quota_hard']:
+            if config['user_quota_hard'] and quotas.setdefault(sender_hash, 0) + int(request['size']) > config[
+                'user_quota_hard']:
                 msg = 'quota would be exceeded. max file size is %d' % (config['user_quota_hard'] - quotas[sender_hash])
                 logging.debug(msg)
                 self._sendError(iq, 'modify', 'not-acceptable', msg)
                 return
             filename = request['filename']
-            folder = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(len(sender_hash)))
-            sane_filename = "".join([c for c in filename if c.isalpha() or c.isdigit() or c=="."]).rstrip()
+            folder = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in
+                             range(len(sender_hash)))
+            sane_filename = "".join([c for c in filename if c.isalpha() or c.isdigit() or c == "."]).rstrip()
             path = os.path.join(sender_hash, folder)
             if sane_filename:
                 path = os.path.join(path, sane_filename)
@@ -167,7 +172,7 @@ class MissingComponent(ComponentXMPP):
             reply['slot']['put'] = os.path.join(config['put_url'], path)
             reply.send()
         else:
-            self._sendError(iq,'cancel','not-allowed','not allowed to request upload slots')
+            self._sendError(iq, 'cancel', 'not-allowed', 'not allowed to request upload slots')
 
     def _sendError(self, iq, error_type, condition, text):
         reply = iq.reply()
@@ -176,6 +181,7 @@ class MissingComponent(ComponentXMPP):
         iq['error']['condition'] = condition
         iq['error']['text'] = text
         iq.send()
+
 
 class HttpHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
@@ -190,10 +196,10 @@ class HttpHandler(BaseHTTPRequestHandler):
             sender_hash = path.split('/')[0]
             maxfilesize = min(maxfilesize, config['user_quota_hard'] - quotas.setdefault(sender_hash, 0))
         if maxfilesize < length:
-            self.send_response(400,'file too large')
+            self.send_response(400, 'file too large')
             self.end_headers()
         else:
-            print('path: '+path)
+            print('path: ' + path)
             files_lock.acquire()
             if path in files:
                 files.remove(path)
@@ -201,20 +207,20 @@ class HttpHandler(BaseHTTPRequestHandler):
                 filename = os.path.join(config['storage_path'], path)
                 os.makedirs(os.path.dirname(filename))
                 remaining = length
-                with open(filename,'wb') as f:
-                    data = self.rfile.read(min(4096,remaining))
+                with open(filename, 'wb') as f:
+                    data = self.rfile.read(min(4096, remaining))
                     while data and remaining >= 0:
                         databytes = len(data)
                         remaining -= databytes
                         if config['user_quota_hard']:
                             quotas[sender_hash] += databytes
                         f.write(data)
-                        data = self.rfile.read(min(4096,remaining))
-                self.send_response(200,'ok')
+                        data = self.rfile.read(min(4096, remaining))
+                self.send_response(200, 'ok')
                 self.end_headers()
             else:
                 files_lock.release()
-                self.send_response(403,'invalid slot')
+                self.send_response(403, 'invalid slot')
                 self.end_headers()
 
     def do_GET(self, body=True):
@@ -222,27 +228,28 @@ class HttpHandler(BaseHTTPRequestHandler):
         path = normalize_path(self.path[1:])
         slashcount = path.count('/')
         if path[0] in ('/', '\\') or slashcount < 1 or slashcount > 2:
-            self.send_response(404,'file not found')
+            self.send_response(404, 'file not found')
             self.end_headers()
         else:
             filename = os.path.join(config['storage_path'], path)
-            print('requesting file: '+filename)
+            print('requesting file: ' + filename)
             try:
-                with open(filename,'rb') as f:
+                with open(filename, 'rb') as f:
                     self.send_response(200)
                     mime, _ = mimetypes.guess_type(filename)
                     if mime is None:
                         mime = 'application/octet-stream'
                     self.send_header("Content-Type", mime)
                     if mime[:6] != 'image/':
-                        self.send_header("Content-Disposition", 'attachment; filename="{}"'.format(os.path.basename(filename)))
+                        self.send_header("Content-Disposition",
+                                         'attachment; filename="{}"'.format(os.path.basename(filename)))
                     fs = os.fstat(f.fileno())
                     self.send_header("Content-Length", str(fs.st_size))
                     self.end_headers()
                     if body:
                         shutil.copyfileobj(f, self.wfile)
             except FileNotFoundError:
-                self.send_response(404,'file not found')
+                self.send_response(404, 'file not found')
                 self.end_headers()
 
     def do_HEAD(self):
@@ -252,21 +259,23 @@ class HttpHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in a separate thread."""
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", default='config.yml', help='Specify alternate config file.')
-    parser.add_argument("-l", "--logfile", default=None, help='File where the server log will be stored. If not specified log to stdout.')
+    parser.add_argument("-l", "--logfile", default=None,
+                        help='File where the server log will be stored. If not specified log to stdout.')
     args = parser.parse_args()
 
-    with open(args.config,'r') as ymlfile:
+    with open(args.config, 'r') as ymlfile:
         config = yaml.load(ymlfile)
 
     files = set()
     files_lock = Lock()
     kill_event = Event()
     logging.basicConfig(level=LOGLEVEL,
-                            format='%(asctime)-24s %(levelname)-8s %(message)s',
-                            filename=args.logfile)
+                        format='%(asctime)-24s %(levelname)-8s %(message)s',
+                        filename=args.logfile)
 
     # Sanitize config['user_quota_*'] and calculate initial quotas
     quotas = {}
@@ -276,7 +285,8 @@ if __name__ == "__main__":
         if config['user_quota_soft'] or config['user_quota_hard']:
             expire(quotaonly=True)
     except ValueError:
-        logging.warning("Invalid user_quota_hard ('%s') or user_quota_soft ('%s'). Quotas disabled.", config['user_quota_soft'], config['user_quota_soft'])
+        logging.warning("Invalid user_quota_hard ('%s') or user_quota_soft ('%s'). Quotas disabled.",
+                        config['user_quota_soft'], config['user_quota_soft'])
         config['user_quota_soft'] = 0
         config['user_quota_hard'] = 0
 
@@ -297,6 +307,7 @@ if __name__ == "__main__":
         server = ThreadedHTTPServer((config['http_address'], config['http_port']), HttpHandler)
     except Exception as e:
         import traceback
+
         logging.debug(traceback.format_exc())
         kill_event.set()
         sys.exit(1)
@@ -305,8 +316,8 @@ if __name__ == "__main__":
         server.socket = ssl.wrap_socket(server.socket, keyfile=config['http_keyfile'], certfile=config['http_certfile'])
     jid = config['component_jid']
     secret = config['component_secret']
-    port = int(config.get('component_port',5347))
-    xmpp = MissingComponent(jid,secret,port)
+    port = int(config.get('component_port', 5347))
+    xmpp = MissingComponent(jid, secret, port)
     if xmpp.connect():
         xmpp.process()
         print("connected")
@@ -317,6 +328,7 @@ if __name__ == "__main__":
                 logging.debug('Ctrl+C pressed')
             else:
                 import traceback
+
                 logging.debug(traceback.format_exc())
             kill_event.set()
     else:
